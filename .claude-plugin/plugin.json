@@ -1,0 +1,44 @@
+{
+  "name": "account-display",
+  "version": "0.1.0",
+  "description": "Shows who is signed in – first and last name, email, plan (Pro, Max 20x, Team Premium …) – in one line, above the prompt or in the status line below it.",
+  "author": {
+    "name": "AlexCherrypi"
+  },
+  "userConfig": {
+    "position": {
+      "type": "string",
+      "title": "Position",
+      "description": "top = a row above the prompt; bottom = the status line under the prompt.",
+      "options": [
+        "bottom",
+        "top"
+      ],
+      "default": "bottom"
+    },
+    "firstName": {
+      "type": "boolean",
+      "title": "Show first name",
+      "description": "The first name of the account's owner.",
+      "default": true
+    },
+    "lastName": {
+      "type": "boolean",
+      "title": "Show last name",
+      "description": "The last name of the account's owner.",
+      "default": true
+    },
+    "email": {
+      "type": "boolean",
+      "title": "Show email",
+      "description": "The account's email address.",
+      "default": true
+    },
+    "plan": {
+      "type": "boolean",
+      "title": "Show plan",
+      "description": "The full account type: Free, Pro, Max 5x, Max 20x, Team Standard, Team Premium, Enterprise …",
+      "default": true
+    }
+  }
+}

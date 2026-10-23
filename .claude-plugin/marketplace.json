@@ -1,0 +1,6 @@
+{
+  "name": "account-display",
+  "description": "Shows the signed-in Claude account (name, email, plan) in one line",
+  "owner": { "name": "AlexCherrypi" },
+  "plugins": [{ "name": "account-display", "source": "./" }]
+}
