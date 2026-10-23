@@ -7,9 +7,11 @@ import type { EngineInterface, Register } from 'claude-code'
 // where (a row above the prompt, or the status line under it) the person picks in the
 // plugin's options.
 //
-// Name, email: `oauthAccount` in ~/.claude.json (displayName, emailAddress).
-// Plan: the login itself (`claudeAiOauth.subscriptionType` and `rateLimitTier`), kept in
-// ~/.claude/.credentials.json, or on macOS in the keychain item Claude Code-credentials.
+// Name, email, plan: `oauthAccount` in ~/.claude.json (displayName, emailAddress,
+// planDisplayName – the plan's name as Claude Code shows it). Where an older record has no
+// planDisplayName, the plan is made from the login itself (`claudeAiOauth.subscriptionType`
+// and `rateLimitTier`), kept in ~/.claude/.credentials.json, or on macOS in the keychain
+// item Claude Code-credentials.
 //
 // After an account switch (/login, an account switcher) the line follows at once, as
 // limit-bars does: every second the files are looked at (a stat, read only when it
@@ -177,12 +179,13 @@ async function readKeychain($: EngineInterface): Promise<Record<string, unknown>
   }
 }
 
-// The plan as people know it: "Pro", "Max 20x", "Team Premium", "Enterprise".
+// The plan as people know it, from the login when ~/.claude.json has no planDisplayName.
+// Claude Code itself counts a Team seat as Premium when its tier is default_claude_max_5x;
+// a Team seat with any other tier is Standard.
 function planName(subscriptionType: string | null, rateLimitTier: string | null): string | null {
   const sub = subscriptionType?.toLowerCase() ?? null
   const tier = rateLimitTier?.toLowerCase() ?? ''
   const multiplier = tier.match(/(\d+)x/)?.[1]
-  const seat = /premium/.test(tier) || multiplier ? 'Premium' : /standard/.test(tier) ? 'Standard' : null
   switch (sub) {
     case null:
       return null
@@ -193,9 +196,9 @@ function planName(subscriptionType: string | null, rateLimitTier: string | null)
     case 'max':
       return multiplier ? `Max ${multiplier}x` : 'Max'
     case 'team':
-      return seat ? `Team ${seat}` : 'Team'
+      return tier === 'default_claude_max_5x' ? 'Team Premium' : tier ? 'Team Standard' : 'Team'
     case 'enterprise':
-      return seat ? `Enterprise ${seat}` : 'Enterprise'
+      return 'Enterprise'
     default:
       return sub
         .split(/[_\s-]+/)
@@ -235,7 +238,7 @@ async function look($: EngineInterface): Promise<void> {
       if (isSwitch) {
         tokens = null
         tokensFor = uuid
-        if (uuid) {
+        if (uuid && !str(oauth?.planDisplayName)) {
           show($, uuid, oauth)
           const item = await readKeychain($)
           // The account changed again while the keychain was read: the next look has it.
@@ -260,7 +263,9 @@ function show($: EngineInterface, uuid: string | null, oauth: Record<string, unk
     firstName: name[0] ?? null,
     lastName: name.length > 1 ? name.slice(1).join(' ') : null,
     email: str(oauth?.emailAddress),
-    plan: oauth ? planName(tokens?.subscriptionType ?? null, tokens?.rateLimitTier ?? null) : null,
+    // What Claude Code shows as "Claude <planDisplayName>" (the server's own name for the
+    // plan, kept in ~/.claude.json from the profile), else made from the login.
+    plan: str(oauth?.planDisplayName) ?? (oauth ? planName(tokens?.subscriptionType ?? null, tokens?.rateLimitTier ?? null) : null),
   }
   if (JSON.stringify(next) === JSON.stringify(account)) return
   account = next

@@ -39,12 +39,15 @@ In `/plugin` → account-display → configure:
 - **Name and email**: `oauthAccount.displayName` and `oauthAccount.emailAddress` in
   `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`). The first word of the display
   name is taken as the first name, the rest as the last name.
-- **Plan**: `subscriptionType` and `rateLimitTier` of the login Claude Code keeps in
-  `~/.claude/.credentials.json`, on macOS in the keychain item `Claude Code-credentials`
-  (read only when the account changes; a `.credentials.json` beside it is used only
-  where the keychain has no item). The tier names the multiplier (`Max 5x`,
-  `Max 20x`) and, for Team and Enterprise, the seat (`Premium`, `Standard`) where it
-  says one; otherwise just `Team` / `Enterprise` is shown.
+- **Plan**: `oauthAccount.planDisplayName` in the same file – the plan's name as Claude
+  Code itself shows it (`Claude <planDisplayName>`), taken from the account's profile.
+  Where an older record has none, the plan is made from `subscriptionType` and
+  `rateLimitTier` of the login Claude Code keeps in `~/.claude/.credentials.json`, on
+  macOS in the keychain item `Claude Code-credentials` (read only when the account
+  changes; a `.credentials.json` beside it is used only where the keychain has no item):
+  `max` with `default_claude_max_5x` / `_20x` is `Max 5x` / `Max 20x`; `team` with
+  `default_claude_max_5x` is `Team Premium` (as Claude Code counts it), with another tier
+  `Team Standard`.
 
 The plugin only reads; the tokens in the login are never used or sent anywhere.
 

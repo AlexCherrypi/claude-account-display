@@ -13,7 +13,7 @@ const BAND = {
   props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 80 },
 } as const
 
-type Login = { uuid: string; name: string; email: string; sub: string; tier: string }
+type Login = { uuid: string; name: string; email: string; sub: string; tier: string; planDisplayName?: string }
 
 const ALEX: Login = { uuid: 'a', name: 'Alex Cherry Pi', email: 'alex@example.com', sub: 'team', tier: 'default_claude_max_5x' }
 const BEA: Login = { uuid: 'b', name: 'Bea Muster', email: 'bea@example.com', sub: 'max', tier: 'default_claude_max_20x' }
@@ -56,7 +56,7 @@ function world(on: On) {
   })
   const clock = mock.clock(on, { now: NOW })
   const login = (l: Login, { mac = false } = {}) => {
-    const cfg = { oauthAccount: { accountUuid: l.uuid, displayName: l.name, emailAddress: l.email } }
+    const cfg = { oauthAccount: { accountUuid: l.uuid, displayName: l.name, emailAddress: l.email, planDisplayName: l.planDisplayName } }
     files.set(CONFIG, { text: JSON.stringify(cfg), mtimeMs: mtime++ })
     if (mac) {
       files.set('/usr/bin/security', { text: '', mtimeMs: 0 })
@@ -181,5 +181,17 @@ describe('account-display', () => {
     login(BEA, { mac: true })
     await $.session.start({ cwd: '/' } as never)
     expect(status.current).toBe('Bea Muster · bea@example.com · Max 20x')
+  })
+
+  test('the plan name Claude Code keeps in ~/.claude.json comes first, with no keychain read', async ($, on) => {
+    const { clock, login, keychain } = world(on)
+    login(ALEX, { mac: true })
+    await $.session.start({ cwd: '/' } as never)
+    const reads = keychain.reads
+    keychain.ms = 3_000
+    login({ ...BEA, planDisplayName: 'Team Premium' }, { mac: true })
+    await clock.advance(1_000)
+    expect(status.current).toBe('Bea Muster · bea@example.com · Team Premium')
+    expect(keychain.reads).toBe(reads)
   })
 })
