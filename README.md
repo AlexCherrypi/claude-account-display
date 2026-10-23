@@ -12,9 +12,15 @@ row above the prompt (`top`). Above the prompt it sits over whatever another plu
 there (e.g. [limit-bars](https://github.com/AlexCherrypi/limit-bars)), as long as that
 plugin passes the band on.
 
-After an account switch (`/login` with another account, an account switcher such as
+**After an account switch** (`/login` with another account, an account switcher such as
 [claude-account-switcher](https://github.com/AlexCherrypi/claude-account-switcher)) the
-line shows the new account within two seconds.
+line shows the new account at once, as limit-bars does: every second it looks at
+`oauthAccount.accountUuid` in `~/.claude.json` (a `stat`, read only when it changed) –
+or wherever Claude Code keeps it: `$CLAUDE_CONFIG_DIR/.claude.json`, an older install's
+`.config.json`, `.claude-custom-oauth.json` with `CLAUDE_CODE_CUSTOM_OAUTH_URL`. A file
+that is half written for a moment is no switch. On macOS the new name and email show
+right away and the plan follows as soon as the keychain has answered; the old account's
+plan is never shown beside the new account.
 
 ## Options
 
@@ -35,7 +41,8 @@ In `/plugin` → account-display → configure:
   name is taken as the first name, the rest as the last name.
 - **Plan**: `subscriptionType` and `rateLimitTier` of the login Claude Code keeps in
   `~/.claude/.credentials.json`, on macOS in the keychain item `Claude Code-credentials`
-  (read only when the account changes). The tier names the multiplier (`Max 5x`,
+  (read only when the account changes; a `.credentials.json` beside it is used only
+  where the keychain has no item). The tier names the multiplier (`Max 5x`,
   `Max 20x`) and, for Team and Enterprise, the seat (`Premium`, `Standard`) where it
   says one; otherwise just `Team` / `Enterprise` is shown.
 

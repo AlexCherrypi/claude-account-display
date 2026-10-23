@@ -44,14 +44,31 @@ function world(on: On) {
     if (!f) throw new Error(`ENOENT ${e.path}`)
     return { value: f.text } as never
   })
+  // macOS: the login is in the keychain, which answers after keychainMs.
+  const keychain = { current: null as Login | null, ms: 0, reads: 0 }
+  on('process.run', async () => {
+    keychain.reads += 1
+    if (keychain.ms) await clock.sleep(keychain.ms)
+    const l = keychain.current
+    if (!l) return { value: { exitCode: 44, stdout: '', stderr: '' } } as never
+    const cred = { claudeAiOauth: { accessToken: 'x', subscriptionType: l.sub, rateLimitTier: l.tier } }
+    return { value: { exitCode: 0, stdout: JSON.stringify(cred), stderr: '' } } as never
+  })
   const clock = mock.clock(on, { now: NOW })
-  const login = (l: Login) => {
+  const login = (l: Login, { mac = false } = {}) => {
     const cfg = { oauthAccount: { accountUuid: l.uuid, displayName: l.name, emailAddress: l.email } }
     files.set(CONFIG, { text: JSON.stringify(cfg), mtimeMs: mtime++ })
+    if (mac) {
+      files.set('/usr/bin/security', { text: '', mtimeMs: 0 })
+      files.set('/System/Library/CoreServices', { text: '', mtimeMs: 0 })
+      keychain.current = l
+      return
+    }
     const cred = { claudeAiOauth: { accessToken: 'x', subscriptionType: l.sub, rateLimitTier: l.tier } }
     files.set(CREDENTIALS, { text: JSON.stringify(cred), mtimeMs: mtime++ })
   }
-  return { clock, login, beneath }
+  const halfWritten = () => files.set(CONFIG, { text: '{"oauthAcc', mtimeMs: mtime++ })
+  return { clock, login, beneath, keychain, halfWritten }
 }
 
 describe('account-display', () => {
@@ -115,7 +132,54 @@ describe('account-display', () => {
     login(ALEX)
     await $.session.start({ cwd: '/' } as never)
     login(BEA)
-    await clock.advance(2_500)
+    await clock.advance(1_000)
+    expect(status.current).toBe('Bea Muster · bea@example.com · Max 20x')
+  })
+
+  test('top: the band shows the new account within a second of a switch', { options: { position: 'top' } }, async ($, on) => {
+    const { clock, login } = world(on)
+    login(ALEX)
+    await $.session.start({ cwd: '/' } as never)
+    login(BEA)
+    await clock.advance(1_000)
+    const ui = await $.ui.mount({ plugin: 'account-display', surface: 'terminal', ...BAND } as never)
+    expect(await ui.find({ type: 'Text', text: 'Bea Muster · bea@example.com · Max 20x' })).toBeDefined()
+    await ui.unmount()
+  })
+
+  test('a half-written ~/.claude.json is no switch', async ($, on) => {
+    const { clock, login, halfWritten } = world(on)
+    login(ALEX)
+    await $.session.start({ cwd: '/' } as never)
+    halfWritten()
+    await clock.advance(1_000)
+    expect(status.current).toBe('Alex Cherry Pi · alex@example.com · Team Premium')
+    login(BEA)
+    await clock.advance(1_000)
+    expect(status.current).toBe('Bea Muster · bea@example.com · Max 20x')
+  })
+
+  test('macOS: name and email at once, the plan when the keychain answers, never the old one', async ($, on) => {
+    const { clock, login, keychain } = world(on)
+    login(ALEX, { mac: true })
+    await $.session.start({ cwd: '/' } as never)
+    expect(status.current).toBe('Alex Cherry Pi · alex@example.com · Team Premium')
+    const reads = keychain.reads
+    await clock.advance(5_000)
+    expect(keychain.reads).toBe(reads) // no switch, no keychain read
+    keychain.ms = 3_000
+    login(BEA, { mac: true })
+    await clock.advance(1_000)
+    expect(status.current).toBe('Bea Muster · bea@example.com')
+    await clock.advance(3_000)
+    expect(status.current).toBe('Bea Muster · bea@example.com · Max 20x')
+  })
+
+  test('macOS: an old .credentials.json beside the keychain is not taken for the plan', async ($, on) => {
+    const { login } = world(on)
+    login({ ...BEA, uuid: 'old', sub: 'pro', tier: '' }) // leaves a file with Pro behind
+    login(BEA, { mac: true })
+    await $.session.start({ cwd: '/' } as never)
     expect(status.current).toBe('Bea Muster · bea@example.com · Max 20x')
   })
 })
