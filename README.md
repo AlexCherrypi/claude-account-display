@@ -53,7 +53,7 @@ In `/plugin` → account-display → configure:
   | `max` | `default_claude_max_5x` | `Max 5x` |
   | `max` | `default_claude_max_20x` | `Max 20x` |
   | `max` | another | `Max` |
-  | `team` | `default_claude_max_5x` | `Team Premium` (as Claude Code counts it) |
+  | `team` | `default_claude_max_5x` | `Team Premium` (as Claude Code counts it; checked on a real Premium seat, whose record has no `planDisplayName` and `seatTier: team_tier_1`) |
   | `team` | another | `Team Standard` |
   | `team` | none | `Team` |
   | `enterprise` | seat tier `enterprise_usage_based` | `Enterprise (usage-based)` |

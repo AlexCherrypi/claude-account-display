@@ -119,6 +119,8 @@ describe('account-display', () => {
       ['max', 'something_else', undefined, 'Max'],
       ['max', 'default_claude_zero', undefined, 'Max (no allowance)'],
       ['team', 'default_claude_max_5x', undefined, 'Team Premium'],
+      // A real Team Premium seat (macOS, 2026-10): no planDisplayName in ~/.claude.json.
+      ['team', 'default_claude_max_5x', 'team_tier_1', 'Team Premium'],
       ['team', 'default_claude_team', undefined, 'Team Standard'],
       ['team', '', undefined, 'Team'],
       ['team', 'default_claude_zero', undefined, 'Team (no allowance)'],
