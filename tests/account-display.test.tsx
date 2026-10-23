@@ -13,7 +13,7 @@ const BAND = {
   props: { hasSurvey: false, isWorking: false, maxRows: 10, bodyColumns: 80 },
 } as const
 
-type Login = { uuid: string; name: string; email: string; sub: string; tier: string; planDisplayName?: string }
+type Login = { uuid: string; name: string; email: string; sub: string; tier: string; planDisplayName?: string; seatTier?: string }
 
 const ALEX: Login = { uuid: 'a', name: 'Alex Cherry Pi', email: 'alex@example.com', sub: 'team', tier: 'default_claude_max_5x' }
 const BEA: Login = { uuid: 'b', name: 'Bea Muster', email: 'bea@example.com', sub: 'max', tier: 'default_claude_max_20x' }
@@ -56,7 +56,7 @@ function world(on: On) {
   })
   const clock = mock.clock(on, { now: NOW })
   const login = (l: Login, { mac = false } = {}) => {
-    const cfg = { oauthAccount: { accountUuid: l.uuid, displayName: l.name, emailAddress: l.email, planDisplayName: l.planDisplayName } }
+    const cfg = { oauthAccount: { accountUuid: l.uuid, displayName: l.name, emailAddress: l.email, planDisplayName: l.planDisplayName, seatTier: l.seatTier } }
     files.set(CONFIG, { text: JSON.stringify(cfg), mtimeMs: mtime++ })
     if (mac) {
       files.set('/usr/bin/security', { text: '', mtimeMs: 0 })
@@ -109,20 +109,28 @@ describe('account-display', () => {
     await ui.unmount()
   })
 
-  test('plan names', async ($, on) => {
+  test('plan names: every combination Claude Code tells apart', async ($, on) => {
     const { clock, login } = world(on)
-    const cases: [string, string, string][] = [
-      ['pro', 'default_claude_pro', 'Pro'],
-      ['max', 'default_claude_max_5x', 'Max 5x'],
-      ['team', 'default_claude_team_standard', 'Team Standard'],
-      ['enterprise', '', 'Enterprise'],
+    const cases: [string, string, string | undefined, string][] = [
+      ['pro', 'default_claude_pro', undefined, 'Pro'],
+      ['pro', 'default_claude_zero', undefined, 'Pro (no allowance)'],
+      ['max', 'default_claude_max_5x', undefined, 'Max 5x'],
+      ['max', 'default_claude_max_20x', undefined, 'Max 20x'],
+      ['max', 'something_else', undefined, 'Max'],
+      ['max', 'default_claude_zero', undefined, 'Max (no allowance)'],
+      ['team', 'default_claude_max_5x', undefined, 'Team Premium'],
+      ['team', 'default_claude_team', undefined, 'Team Standard'],
+      ['team', '', undefined, 'Team'],
+      ['team', 'default_claude_zero', undefined, 'Team (no allowance)'],
+      ['enterprise', '', undefined, 'Enterprise'],
+      ['enterprise', 'default_claude_enterprise', 'enterprise_usage_based', 'Enterprise (usage-based)'],
+      ['enterprise', 'default_claude_zero', undefined, 'Enterprise (no allowance)'],
     ]
-    login({ ...ALEX, sub: 'free', tier: '' })
+    login({ ...ALEX, sub: 'pro', tier: '' })
     await $.session.start({ cwd: '/' } as never)
-    expect(status.current).toBe('Alex Cherry Pi · alex@example.com · Free')
-    for (const [sub, tier, plan] of cases) {
-      login({ ...ALEX, sub, tier })
-      await clock.advance(2_500)
+    for (const [i, [sub, tier, seatTier, plan]] of cases.entries()) {
+      login({ ...ALEX, uuid: `u${i}`, sub, tier, seatTier })
+      await clock.advance(1_000)
       expect(status.current).toBe(`Alex Cherry Pi · alex@example.com · ${plan}`)
     }
   })

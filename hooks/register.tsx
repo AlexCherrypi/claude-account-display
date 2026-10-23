@@ -180,31 +180,39 @@ async function readKeychain($: EngineInterface): Promise<Record<string, unknown>
 }
 
 // The plan as people know it, from the login when ~/.claude.json has no planDisplayName.
-// Claude Code itself counts a Team seat as Premium when its tier is default_claude_max_5x;
-// a Team seat with any other tier is Standard.
-function planName(subscriptionType: string | null, rateLimitTier: string | null): string | null {
+// Every combination Claude Code itself tells apart (2.1.309):
+// - subscriptionType (from the organization type claude_pro / claude_max / claude_team /
+//   claude_enterprise): pro, max, team, enterprise;
+// - rateLimitTier: default_claude_max_5x, default_claude_max_20x (Max 5x / 20x; on a team,
+//   _5x is the Premium seat, as Claude Code counts it), default_claude_zero (no allowance);
+// - seatTier (oauthAccount.seatTier): enterprise_usage_based.
+// Any other tier on a team is the Standard seat; on Max an unnamed tier is plain "Max".
+function planName(subscriptionType: string | null, rateLimitTier: string | null, seatTier: string | null): string | null {
   const sub = subscriptionType?.toLowerCase() ?? null
-  const tier = rateLimitTier?.toLowerCase() ?? ''
-  const multiplier = tier.match(/(\d+)x/)?.[1]
+  const tier = rateLimitTier?.toLowerCase() ?? null
+  let name: string
   switch (sub) {
     case null:
       return null
-    case 'free':
-      return 'Free'
     case 'pro':
-      return 'Pro'
+      name = 'Pro'
+      break
     case 'max':
-      return multiplier ? `Max ${multiplier}x` : 'Max'
+      name = tier === 'default_claude_max_20x' ? 'Max 20x' : tier === 'default_claude_max_5x' ? 'Max 5x' : 'Max'
+      break
     case 'team':
-      return tier === 'default_claude_max_5x' ? 'Team Premium' : tier ? 'Team Standard' : 'Team'
+      name = tier === 'default_claude_max_5x' ? 'Team Premium' : tier && tier !== 'default_claude_zero' ? 'Team Standard' : 'Team'
+      break
     case 'enterprise':
-      return 'Enterprise'
+      name = seatTier === 'enterprise_usage_based' ? 'Enterprise (usage-based)' : 'Enterprise'
+      break
     default:
-      return sub
+      name = sub
         .split(/[_\s-]+/)
         .map(w => w.charAt(0).toUpperCase() + w.slice(1))
         .join(' ')
   }
+  return tier === 'default_claude_zero' ? `${name} (no allowance)` : name
 }
 
 // Reads what changed since the last look and draws it. On an account switch the new
@@ -265,7 +273,7 @@ function show($: EngineInterface, uuid: string | null, oauth: Record<string, unk
     email: str(oauth?.emailAddress),
     // What Claude Code shows as "Claude <planDisplayName>" (the server's own name for the
     // plan, kept in ~/.claude.json from the profile), else made from the login.
-    plan: str(oauth?.planDisplayName) ?? (oauth ? planName(tokens?.subscriptionType ?? null, tokens?.rateLimitTier ?? null) : null),
+    plan: str(oauth?.planDisplayName) ?? (oauth ? planName(tokens?.subscriptionType ?? null, tokens?.rateLimitTier ?? null, str(oauth?.seatTier)) : null),
   }
   if (JSON.stringify(next) === JSON.stringify(account)) return
   account = next

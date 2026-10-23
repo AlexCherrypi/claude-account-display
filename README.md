@@ -32,7 +32,7 @@ In `/plugin` → account-display → configure:
 | `firstName` | on | the owner's first name |
 | `lastName` | on | the owner's last name |
 | `email` | on | the account's email address |
-| `plan` | on | the full plan: `Free`, `Pro`, `Max 5x`, `Max 20x`, `Team Standard`, `Team Premium`, `Enterprise` … |
+| `plan` | on | the full plan: `Pro`, `Max 5x`, `Max 20x`, `Team Standard`, `Team Premium`, `Enterprise` … |
 
 ## Where the figures come from
 
@@ -44,10 +44,21 @@ In `/plugin` → account-display → configure:
   Where an older record has none, the plan is made from `subscriptionType` and
   `rateLimitTier` of the login Claude Code keeps in `~/.claude/.credentials.json`, on
   macOS in the keychain item `Claude Code-credentials` (read only when the account
-  changes; a `.credentials.json` beside it is used only where the keychain has no item):
-  `max` with `default_claude_max_5x` / `_20x` is `Max 5x` / `Max 20x`; `team` with
-  `default_claude_max_5x` is `Team Premium` (as Claude Code counts it), with another tier
-  `Team Standard`.
+  changes; a `.credentials.json` beside it is used only where the keychain has no item),
+  and `oauthAccount.seatTier`. Every combination Claude Code itself tells apart:
+
+  | `subscriptionType` | `rateLimitTier` / `seatTier` | Shown |
+  |---|---|---|
+  | `pro` | any | `Pro` |
+  | `max` | `default_claude_max_5x` | `Max 5x` |
+  | `max` | `default_claude_max_20x` | `Max 20x` |
+  | `max` | another | `Max` |
+  | `team` | `default_claude_max_5x` | `Team Premium` (as Claude Code counts it) |
+  | `team` | another | `Team Standard` |
+  | `team` | none | `Team` |
+  | `enterprise` | seat tier `enterprise_usage_based` | `Enterprise (usage-based)` |
+  | `enterprise` | another | `Enterprise` |
+  | any | `default_claude_zero` | `… (no allowance)`, e.g. `Pro (no allowance)` |
 
 The plugin only reads; the tokens in the login are never used or sent anywhere.
 

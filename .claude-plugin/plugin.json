@@ -37,7 +37,7 @@
     "plan": {
       "type": "boolean",
       "title": "Show plan",
-      "description": "The full account type: Free, Pro, Max 5x, Max 20x, Team Standard, Team Premium, Enterprise …",
+      "description": "The full account type: Pro, Max 5x, Max 20x, Team Standard, Team Premium, Enterprise …",
       "default": true
     }
   }
