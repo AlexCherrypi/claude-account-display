@@ -7,13 +7,16 @@ import type { EngineInterface, Register } from 'claude-code'
 // where (a row above the prompt, or the status line under it) the person picks in the
 // plugin's options.
 //
-// Name, email: `oauthAccount` in ~/.claude.json (displayName, emailAddress).
-// Plan: the login itself (`claudeAiOauth.subscriptionType` and `rateLimitTier`), kept in
-// ~/.claude/.credentials.json, or on macOS in the keychain item Claude Code-credentials.
+// Name, email, plan: `oauthAccount` in ~/.claude.json (displayName, emailAddress,
+// planDisplayName – the plan's name as Claude Code shows it). Where an older record has no
+// planDisplayName, the plan is made from the login itself (`claudeAiOauth.subscriptionType`
+// and `rateLimitTier`), kept in ~/.claude/.credentials.json, or on macOS in the keychain
+// item Claude Code-credentials.
 //
-// After an account switch (/login, an account switcher) the line follows at once: every
-// 2 seconds the files are looked at (a stat, read only when it changed); the keychain is
-// read only when the account in ~/.claude.json changed.
+// After an account switch (/login, an account switcher) the line follows at once, as
+// limit-bars does: every second the files are looked at (a stat, read only when it
+// changed), and a switch draws the new account right away. The keychain is read only when
+// the account in ~/.claude.json changed.
 
 type Field = 'firstName' | 'lastName' | 'email' | 'plan'
 const FIELDS: readonly Field[] = ['firstName', 'lastName', 'email', 'plan']
@@ -28,7 +31,7 @@ type Account = {
 
 type Position = 'top' | 'bottom'
 
-const WATCH_MS = 2_000
+const WATCH_MS = 1_000 // how often the files are looked at (a stat; read only when it changed)
 const KEYCHAIN_SERVICE = 'Claude Code-credentials'
 const SEPARATOR = ' · '
 
@@ -39,6 +42,9 @@ let line: string | undefined
 let lastStatus: string | undefined
 let configStamp: string | null = null
 let credentialsStamp: string | null = null
+let configFile: string | null | undefined
+let mac: boolean | undefined
+let usesKeychain = false
 let tokens: { subscriptionType: string | null; rateLimitTier: string | null } | null = null
 let tokensFor: string | null | undefined
 let ticking = false
@@ -79,11 +85,23 @@ async function home($: EngineInterface): Promise<string | null> {
   return h ? trimSlash(h) : null
 }
 
-// ~/.claude.json, or .claude.json inside CLAUDE_CONFIG_DIR.
+// The engine's global config, found as the engine finds it (as limit-bars does): an older
+// install's <$CLAUDE_CONFIG_DIR or ~/.claude>/.config.json while that holds anything, else
+// $CLAUDE_CONFIG_DIR/.claude.json or ~/.claude.json – .claude-custom-oauth.json with a
+// custom OAuth URL.
 async function configPath($: EngineInterface): Promise<string | null> {
-  const dir = await safe(() => $.env.get('CLAUDE_CONFIG_DIR'))
-  const base = dir ? trimSlash(dir) : await home($)
-  return base ? `${base}/.claude.json` : null
+  if (configFile !== undefined) return configFile
+  const homeDir = await home($)
+  const configDir = (await safe(() => $.env.get('CLAUDE_CONFIG_DIR')))?.replace(/[\\/]+$/, '')
+  const suffix = (await safe(() => $.env.get('CLAUDE_CODE_CUSTOM_OAUTH_URL'))) ? '-custom-oauth' : ''
+  const dir = configDir || homeDir
+  const current = dir ? `${dir}/.claude${suffix}.json` : null
+  const legacyDir = configDir || (homeDir ? `${homeDir}/.claude` : null)
+  const legacy = legacyDir ? `${legacyDir}/.config.json` : null
+  const st = legacy ? await safe(() => $.fs.stat(legacy)) : undefined
+  const isLegacy = st?.kind === 'file' && (st.size > 0 || !current || !(await safe(() => $.fs.stat(current))))
+  configFile = isLegacy ? legacy : current
+  return configFile
 }
 
 // <CLAUDE_CONFIG_DIR or ~/.claude>/.credentials.json
@@ -96,8 +114,9 @@ async function credentialsPath($: EngineInterface): Promise<string | null> {
 }
 
 async function isMac($: EngineInterface): Promise<boolean> {
-  if (await isWindows($)) return false
-  return Boolean((await safe(() => $.fs.exists('/usr/bin/security'))) && (await safe(() => $.fs.exists('/System/Library/CoreServices'))))
+  if (mac !== undefined) return mac
+  if (await isWindows($)) return (mac = false)
+  return (mac = Boolean((await safe(() => $.fs.exists('/usr/bin/security'))) && (await safe(() => $.fs.exists('/System/Library/CoreServices')))))
 }
 
 async function sha256Hex(text: string): Promise<string> {
@@ -138,11 +157,15 @@ function tokensOf(doc: Record<string, unknown> | null): typeof tokens {
   return { subscriptionType: str(t.subscriptionType), rateLimitTier: str(t.rateLimitTier) }
 }
 
-async function readKeychain($: EngineInterface): Promise<Record<string, unknown> | null | undefined> {
+// The keychain item's login; 'missing' when there is none (security exits 44), null when it
+// could not be read (a locked keychain).
+async function readKeychain($: EngineInterface): Promise<Record<string, unknown> | null | 'missing'> {
   const user = (await safe(() => $.env.get('USER'))) || 'claude-code-user'
   const service = await keychainService($)
   const r = await safe(() => $.process.run(['security', 'find-generic-password', '-a', user, '-w', '-s', service], { timeoutMs: 10_000 }))
-  if (!r || r.exitCode !== 0) return undefined
+  usesKeychain = r?.exitCode !== 44
+  if (r?.exitCode === 44) return 'missing'
+  if (!r || r.exitCode !== 0) return null
   let out = r.stdout.trim()
   // `security -w` prints the data as hex when it is not plain text.
   if (!out.startsWith('{') && /^[0-9a-f]+$/i.test(out)) {
@@ -156,72 +179,105 @@ async function readKeychain($: EngineInterface): Promise<Record<string, unknown>
   }
 }
 
-// The plan as people know it: "Pro", "Max 20x", "Team Premium", "Enterprise".
-function planName(subscriptionType: string | null, rateLimitTier: string | null): string | null {
+// The plan as people know it, from the login when ~/.claude.json has no planDisplayName.
+// Every combination Claude Code itself tells apart (2.1.309):
+// - subscriptionType (from the organization type claude_pro / claude_max / claude_team /
+//   claude_enterprise): pro, max, team, enterprise;
+// - rateLimitTier: default_claude_max_5x, default_claude_max_20x (Max 5x / 20x; on a team,
+//   _5x is the Premium seat, as Claude Code counts it), default_claude_zero (no allowance);
+// - seatTier (oauthAccount.seatTier): enterprise_usage_based.
+// Any other tier on a team is the Standard seat; on Max an unnamed tier is plain "Max".
+function planName(subscriptionType: string | null, rateLimitTier: string | null, seatTier: string | null): string | null {
   const sub = subscriptionType?.toLowerCase() ?? null
-  const tier = rateLimitTier?.toLowerCase() ?? ''
-  const multiplier = tier.match(/(\d+)x/)?.[1]
-  const seat = /premium/.test(tier) || multiplier ? 'Premium' : /standard/.test(tier) ? 'Standard' : null
+  const tier = rateLimitTier?.toLowerCase() ?? null
+  let name: string
   switch (sub) {
     case null:
       return null
-    case 'free':
-      return 'Free'
     case 'pro':
-      return 'Pro'
+      name = 'Pro'
+      break
     case 'max':
-      return multiplier ? `Max ${multiplier}x` : 'Max'
+      name = tier === 'default_claude_max_20x' ? 'Max 20x' : tier === 'default_claude_max_5x' ? 'Max 5x' : 'Max'
+      break
     case 'team':
-      return seat ? `Team ${seat}` : 'Team'
+      name = tier === 'default_claude_max_5x' ? 'Team Premium' : tier && tier !== 'default_claude_zero' ? 'Team Standard' : 'Team'
+      break
     case 'enterprise':
-      return seat ? `Enterprise ${seat}` : 'Enterprise'
+      name = seatTier === 'enterprise_usage_based' ? 'Enterprise (usage-based)' : 'Enterprise'
+      break
     default:
-      return sub
+      name = sub
         .split(/[_\s-]+/)
         .map(w => w.charAt(0).toUpperCase() + w.slice(1))
         .join(' ')
   }
+  return tier === 'default_claude_zero' ? `${name} (no allowance)` : name
 }
 
-// Reads what changed since the last look; true when the account shown changed.
-async function look($: EngineInterface): Promise<boolean> {
+// Reads what changed since the last look and draws it. On an account switch the new
+// account's name and email show at once; on macOS, where the plan is in the keychain, the
+// plan follows when that read is back (the old account's is never shown meanwhile).
+async function look($: EngineInterface): Promise<void> {
   const cfgPath = await configPath($)
   const credPath = await credentialsPath($)
   const cfgStamp = await stampOf($, cfgPath)
   const credStamp = await stampOf($, credPath)
-  if (cfgStamp === configStamp && credStamp === credentialsStamp && account) return false
+  if (cfgStamp === configStamp && credStamp === credentialsStamp && account) return
 
   let oauth: Record<string, unknown> | null = null
   if (cfgPath && cfgStamp) {
     const cfg = await readJson($, cfgPath)
-    // Half written: try again at the next look.
-    if (!cfg) return false
+    // Half written, or over $.fs.read's limit for a moment: no switch, the next look tries again.
+    if (!cfg) return
     oauth = isObject(cfg.oauthAccount) ? cfg.oauthAccount : null
   }
   configStamp = cfgStamp
   const uuid = str(oauth?.accountUuid)
+  const isSwitch = tokensFor !== uuid
 
-  // The plan: from the file where it changed; from the keychain on macOS only when the
-  // account did (a keychain read is a process).
-  if (credStamp !== credentialsStamp || tokensFor !== uuid) {
+  if (credStamp !== credentialsStamp || isSwitch) {
     credentialsStamp = credStamp
-    let doc = credPath && credStamp ? await readJson($, credPath) : null
-    if (!tokensOf(doc) && tokensFor !== uuid && (await isMac($))) doc = (await readKeychain($)) ?? null
-    tokens = tokensOf(doc)
-    tokensFor = uuid
+    const fromFile = () => (credPath && credStamp ? readJson($, credPath) : Promise.resolve(null))
+    // On macOS the login is in the keychain (a file beside it may be an old one), read only
+    // on a switch, as it takes a process: draw the new account first, then its plan. Without
+    // a keychain item Claude Code keeps it in the file, as on Linux and Windows.
+    if (await isMac($)) {
+      if (isSwitch) {
+        tokens = null
+        tokensFor = uuid
+        if (uuid && !str(oauth?.planDisplayName)) {
+          show($, uuid, oauth)
+          const item = await readKeychain($)
+          // The account changed again while the keychain was read: the next look has it.
+          if (tokensFor !== uuid) return
+          tokens = item === 'missing' ? tokensOf(await fromFile()) : tokensOf(item)
+        }
+      } else if (!usesKeychain) {
+        tokens = tokensOf(await fromFile())
+      }
+    } else {
+      tokens = tokensOf(await fromFile())
+      tokensFor = uuid
+    }
   }
+  show($, uuid, oauth)
+}
 
+function show($: EngineInterface, uuid: string | null, oauth: Record<string, unknown> | null): void {
   const name = str(oauth?.displayName)?.split(/\s+/) ?? []
   const next: Account = {
     uuid,
     firstName: name[0] ?? null,
     lastName: name.length > 1 ? name.slice(1).join(' ') : null,
     email: str(oauth?.emailAddress),
-    plan: oauth ? planName(tokens?.subscriptionType ?? null, tokens?.rateLimitTier ?? null) : null,
+    // What Claude Code shows as "Claude <planDisplayName>" (the server's own name for the
+    // plan, kept in ~/.claude.json from the profile), else made from the login.
+    plan: str(oauth?.planDisplayName) ?? (oauth ? planName(tokens?.subscriptionType ?? null, tokens?.rateLimitTier ?? null, str(oauth?.seatTier)) : null),
   }
-  const changed = JSON.stringify(next) !== JSON.stringify(account)
+  if (JSON.stringify(next) === JSON.stringify(account)) return
   account = next
-  return changed
+  refresh($)
 }
 
 // ---------------------------------------------------------------- Drawing
@@ -249,7 +305,7 @@ async function tick($: EngineInterface): Promise<void> {
   if (ticking) return
   ticking = true
   try {
-    if (await look($)) refresh($)
+    await look($)
   } catch {
     // the next look tries again
   } finally {
@@ -265,6 +321,9 @@ export const register: Register = (on, options) => {
   lastStatus = undefined
   configStamp = null
   credentialsStamp = null
+  configFile = undefined
+  mac = undefined
+  usesKeychain = false
   tokens = null
   tokensFor = undefined
   ticking = false
